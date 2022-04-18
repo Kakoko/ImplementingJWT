@@ -1,0 +1,208 @@
+
+
+1. Lets create a Dot Net 6 API Application
+
+2. We need to install packages that will enable us to use JWT
+	=> Microsoft.AspNetCore.Authentication.JwtBearer
+	=> System.IdentityModel.Tokens.Jwt
+
+3. We need to add the secrets keys and other values that qualify it. This comes in handy when generating the token
+
+	 "JWT": {
+    "Key": "Become great in 2022",
+    "Issuer": "https://codeunparalleled.com",
+    "Audience": "codeunparalleled.com"
+            }
+
+
+4. Since our application will depend on JWT, we need to Add it to the Dependency Injection Container
+
+builder.Services.AddAuthentication(x =>
+{
+	x.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+	x.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+}).AddJwtBearer(o =>
+{
+	var Key = Encoding.UTF8.GetBytes(builder.Configuration["JWT:Key"]);
+	o.SaveToken = true;
+	o.TokenValidationParameters = new TokenValidationParameters
+	{
+		ValidateIssuer = false,
+		ValidateAudience = false,
+		ValidateLifetime = true,
+		ValidateIssuerSigningKey = true,
+		ValidIssuer = builder.Configuration["JWT:Issuer"],
+		ValidAudience = builder.Configuration["JWT:Audience"],
+		IssuerSigningKey = new SymmetricSecurityKey(Key)
+	};
+});
+	
+
+5. Lets add authentication
+
+
+app.UseAuthentication(); 
+
+Make sure it is before Authorization
+
+
+6. Create a models folder with Users and Token classes
+
+
+public class Users
+{
+	public string Name { get; set; }
+	public string Password { get; set; }
+}
+
+
+If user is successfully authenticated, Token will be generated
+
+public class Tokens
+{
+	public string Token { get; set; }
+	public string RefreshToken { get; set; }
+}
+
+7. Create a repository folder for the JWT Creation
+
+
+public interface ITokenRepository
+    {
+        Tokens Authenticate(Users users);
+    }
+
+
+create a repository class
+
+
+
+  Dictionary<string, string> UsersRecords = new Dictionary<string, string>
+    {
+        { "admin","admin"},
+        { "password","password"}
+    };
+
+
+
+
+
+
+private readonly IConfiguration _configuration;
+
+        public TokenRepository(IConfiguration configuration)
+        {
+            _configuration = configuration;
+        }
+
+
+public Tokens Authenticate(Users users)
+        {
+            if (!UsersRecords.Any(x => x.Key == users.Name && x.Value == users.Password))
+            {
+                return null;
+            }
+
+            //Generate JSON Web Token
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var tokenKey = Encoding.UTF8.GetBytes(_configuration["JWT:Key"]);
+            var tokenDescriptor = new SecurityTokenDescriptor
+            {
+                Subject = new ClaimsIdentity(new Claim[]
+              {
+             new Claim(ClaimTypes.Name, users.Name)
+              }),
+                Expires = DateTime.UtcNow.AddMinutes(10),
+                SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(tokenKey), SecurityAlgorithms.HmacSha256Signature)
+            };
+            var token = tokenHandler.CreateToken(tokenDescriptor);
+            return new Tokens { Token = tokenHandler.WriteToken(token) };
+        }
+
+
+
+8. Create a controller
+
+
+Recruits Controller
+
+private readonly ITokenRepository _tokenRepository;
+
+        public RecruitsController(ITokenRepository tokenRepository)
+        {
+            _tokenRepository = tokenRepository;
+        }
+
+        // GET: api/<UsersController>
+        [HttpGet]
+        public List<string> Get()
+        {
+            var recruits = new List<string>
+        {
+            "John Doe",
+            "Jane Doe",
+            "Junior Doe"
+        };
+
+            return recruits;
+        }
+
+        [AllowAnonymous]
+        [HttpPost]
+        [Route("authenticate")]
+        public IActionResult Authenticate(Users usersdata)
+        {
+            var token = _tokenRepository.Authenticate(usersdata);
+
+            if (token == null)
+            {
+                return Unauthorized();
+            }
+
+            return Ok(token);
+        }
+
+
+9. AddDependency Injection to the Repository
+
+// Repository
+builder.Services.AddScoped<ITokenRepository, TokenRepository>();
+
+
+
+10. Handling JWT Using Swagger
+
+builder.Services.AddSwaggerGen(c =>
+{
+
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = @"JWT Authorization header using the Bearer scheme. \r\n\r\n 
+                      Enter 'Bearer' [space] and then your token in the text input below.
+                      \r\n\r\nExample: 'Bearer 12345abcdef'",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer"
+    });
+
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement()
+      {
+        {
+          new OpenApiSecurityScheme
+          {
+            Reference = new OpenApiReference
+              {
+                Type = ReferenceType.SecurityScheme,
+                Id = "Bearer"
+              },
+              Scheme = "oauth2",
+              Name = "Bearer",
+              In = ParameterLocation.Header,
+
+            },
+            new List<string>()
+          }
+        });
+
+});
